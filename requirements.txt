@@ -1,7 +1,6 @@
-streamlit
-streamlit-webrtc
-speechrecognition
-gtts
+streamlit==1.47.0
+openai-whisper
 langdetect
-numpy
-av
+pyttsx3
+streamlit-webrtc
+gtts
