@@ -1,17 +1,31 @@
 import streamlit as st
-import speech_recognition as sr
+from streamlit_webrtc import webrtc_streamer, AudioProcessorBase
 import pyttsx3
 from langdetect import detect
+import queue
+import av
+import whisper
 
-st.set_page_config(page_title="YuvaPath - AI Career Co-Pilot", layout="centered")
+# Initialize Whisper ASR model (small or base for faster performance)
+model = whisper.load_model("base")
+
+st.set_page_config(page_title="YuvaPath", layout="centered")
 st.title("🎯 YuvaPath: AI Career Co-Pilot")
-st.markdown("#### Personalized career guidance for every Indian youth")
+st.markdown("#### Personalized career guidance with voice or text")
 
-# Initialize TTS engine
+# Queue to hold audio frames
+audio_queue = queue.Queue()
+
+class AudioProcessor(AudioProcessorBase):
+    def recv(self, frame: av.AudioFrame) -> av.AudioFrame:
+        audio_queue.put(frame.to_ndarray().flatten())
+        return frame
+
+# TTS setup
 engine = pyttsx3.init()
 engine.setProperty('rate', 150)
 
-# Career guidance mapping
+# Simple career database
 career_paths = {
     "BA": ["Content Writer", "UPSC Aspirant", "Marketing Analyst"],
     "BSC": ["Data Analyst", "Lab Technician", "UX Designer"],
@@ -19,56 +33,57 @@ career_paths = {
     "OTHER": ["Skill-based jobs", "Certifications", "Freelancing"]
 }
 
-def get_speech_input(prompt_text):
-    r = sr.Recognizer()
-    with sr.Microphone() as source:
-        st.info(prompt_text)
-        audio = r.listen(source)
-        try:
-            text = r.recognize_google(audio)
-            return text
-        except sr.UnknownValueError:
-            st.error("Could not understand audio.")
-        except sr.RequestError:
-            st.error("Could not request results; check your internet.")
-    return ""
+# --- Speech Recording Section ---
+st.markdown("### 🎙️ Speak or Type Your Degree")
+speech_mode = st.toggle("Use Voice Input", value=False)
 
-# --- UI Input ---
-st.markdown("##### 🎤 Speak or type your input")
+degree = ""
 
-col1, col2 = st.columns(2)
+if speech_mode:
+    webrtc_streamer(key="voice", audio_processor_factory=AudioProcessor)
 
-with col1:
-    if st.button("🎙 Speak Degree"):
-        degree = get_speech_input("Speak your degree (e.g., BA, BSc, BCom)")
-    else:
-        degree = st.text_input("📚 Degree (e.g., BA, BSc, BCom)")
+    if st.button("📝 Transcribe Voice"):
+        with st.spinner("Transcribing..."):
+            import numpy as np
+            import soundfile as sf
 
-with col2:
-    if st.button("🎙 Speak Language"):
-        language = get_speech_input("Speak your preferred language")
-    else:
-        language = st.text_input("🗣 Preferred Language (e.g., English, Hindi)")
+            audio_data = []
 
-# --- Process ---
+            # Collect audio from queue
+            while not audio_queue.empty():
+                audio_data.append(audio_queue.get())
+
+            if audio_data:
+                audio_np = np.concatenate(audio_data).astype(np.float32)
+                sf.write("temp.wav", audio_np, samplerate=16000)
+                result = model.transcribe("temp.wav")
+                degree = result["text"]
+                st.success(f"You said: {degree}")
+            else:
+                st.warning("No audio captured yet.")
+else:
+    degree = st.text_input("📚 Enter Your Degree (e.g., BA, BSc, BCom)")
+
+language = st.selectbox("🗣 Preferred Language", ["English", "Hindi", "Tamil", "Telugu"])
+
+# --- Career Recommendation Logic ---
 if st.button("🚀 Get Career Guidance"):
     degree_upper = degree.strip().upper()
     paths = career_paths.get(degree_upper, career_paths["OTHER"])
-    roadmap = f"As a {degree} graduate, focus on soft skills, free certifications, and industry tools."
+    roadmap = f"As a {degree}, you can grow by learning communication, digital tools, and exploring {paths[0]}."
 
-    st.success("✅ Personalized Career Recommendations")
+    st.success("✅ Career Recommendations")
     for i, path in enumerate(paths, 1):
         st.markdown(f"**{i}. {path}**")
 
-    st.info(f"📍 Learning Roadmap:\n{roadmap}")
+    st.info(f"📍 Learning Roadmap: {roadmap}")
 
     try:
         lang_detected = detect(degree)
-        st.markdown(f"🌐 Language Detected from Input: `{lang_detected}`")
+        st.caption(f"🌐 Detected Input Language: `{lang_detected}`")
     except:
-        st.markdown("🌐 Language detection failed.")
+        st.caption("🌐 Language detection failed.")
 
-    # TTS Button
     if st.button("🔊 Speak Roadmap"):
         engine.say(roadmap)
         engine.runAndWait()
