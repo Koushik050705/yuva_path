@@ -1,147 +1,104 @@
 import streamlit as st
-from streamlit_webrtc import webrtc_streamer, WebRtcMode, AudioProcessorBase
-import speech_recognition as sr
 from gtts import gTTS
-import langdetect
-import numpy as np
-import av
-import wave
-import tempfile
-import queue
+from io import BytesIO
 import base64
 
-st.set_page_config(page_title="YuvaPath - AI Career Co-Pilot", layout="centered")
-st.title("🎯 YuvaPath: AI Career Co-Pilot")
-st.markdown("#### Personalized career guidance with voice or text")
-
-# ---------------- Career Paths -------------------
-career_paths = {
-    "BA": ["Content Writer", "UPSC Aspirant", "Marketing Analyst"],
-    "BSC": ["Data Analyst", "Lab Technician", "UX Designer"],
-    "BCOM": ["Accountant", "Financial Analyst", "Entrepreneur"],
-    "BTECH": ["Software Developer", "ML Engineer", "Startup Founder"],
-    "BE": ["Civil Engineer", "Electrical Engineer", "Software Engineer"],
-    "BCA": ["Web Developer", "Software Tester", "Python Developer"],
-    "MCA": ["Full Stack Developer", "Data Scientist", "AI Specialist"],
-    "MBA": ["Business Analyst", "Product Manager", "Marketing Executive"],
-    "LLB": ["Lawyer", "Legal Advisor", "Judicial Services"],
-    "DIPLOMA": ["Electrician", "Mechanical Technician", "Draftsman"],
-    "BPHARMA": ["Pharmacist", "Clinical Researcher", "Medical Sales"],
-    "MBBS": ["Doctor", "Medical Officer", "Public Health Expert"],
-    "12TH": ["Intern", "Online Cert Courses", "Freelancer"],
-    "10TH": ["Apprentice", "Online Cert Courses", "Startup Assistant"],
-    "OTHER": ["Skill-based jobs", "Certifications", "Freelancing"]
+# ------------------------ Career Data ------------------------ #
+CAREER_DB = {
+    "B.Tech": {
+        "Software Engineer": ["Learn C/C++, Java or Python", "Data Structures and Algorithms", "Web Development / App Development", "Work on projects", "Prepare for interviews"],
+        "Data Scientist": ["Python, Statistics, Probability", "Pandas, Numpy, Matplotlib", "Machine Learning", "Deep Learning", "Build portfolio projects"],
+        "Mechanical Engineer": ["Thermodynamics", "Solid Mechanics", "CAD Software", "Industrial Training", "GATE Exam (optional)"]
+    },
+    "B.Sc": {
+        "Research Scientist": ["Choose a domain: Physics, Chemistry, etc.", "Do MSc and focus on research", "Publish papers", "Apply for PhD"],
+        "Lab Technician": ["Specialize in practical skills", "Do certifications", "Intern at labs/hospitals"],
+        "Data Analyst": ["Learn Excel, Python/R", "Data Visualization (PowerBI/Tableau)", "SQL and Statistics"]
+    },
+    "B.Com": {
+        "Chartered Accountant": ["Register with ICAI", "Clear CA Foundation", "Clear CA Inter and Final", "3 years Articleship"],
+        "Financial Analyst": ["Learn Excel, Accounting, Financial Modeling", "Do CFA/FRM Certification", "Get internship at finance firms"],
+        "Bank PO": ["Prepare for IBPS/SBI PO Exams", "Practice Quant, Reasoning, English"]
+    },
+    "BA": {
+        "Civil Services (IAS/IPS)": ["Prepare for UPSC", "Read NCERTs", "Join coaching (optional)", "Practice essays, current affairs"],
+        "Journalist": ["Do MA Journalism", "Work at a media house", "Build portfolio"],
+        "Teacher": ["Do B.Ed", "Prepare for TET/CTET"]
+    },
+    "Law": {
+        "Corporate Lawyer": ["Do internships at law firms", "Specialize in corporate law", "Clear bar exam"],
+        "Litigation Lawyer": ["Practice under a senior", "Appear in court", "Focus on criminal/civil law"],
+        "Legal Advisor": ["Work with companies or govt", "Offer compliance/legal advice"]
+    },
+    "MBBS": {
+        "Doctor (Specialist)": ["Clear NEET PG", "Choose specialization: MD/MS", "Do residency"],
+        "Hospital Administrator": ["Do MBA in Hospital Mgmt", "Work in hospital operations"],
+        "Medical Researcher": ["Join ICMR, CSIR projects", "Publish research papers"]
+    },
+    "Diploma": {
+        "Technician": ["Get certified", "Work in private/public sector"],
+        "Junior Engineer": ["Prepare for SSC JE", "Work in govt/private projects"],
+        "Freelancer": ["Do skill training: Electrician, Plumber, AutoCAD, etc."]
+    },
+    "Vocational": {
+        "Digital Marketer": ["Learn SEO, SEM, Social Media", "Freelance or join firm"],
+        "Fashion Designer": ["Do diploma", "Create portfolio", "Join brand or freelance"],
+        "Animator": ["Learn Blender/AfterEffects", "Work on animated content"]
+    }
 }
 
-# ---------------- Degree Normalization -------------------
-def normalize_degree(degree_raw):
-    degree = degree_raw.strip().upper()
-    mappings = {
-        "BACHELOR OF ARTS": "BA",
-        "BACHELOR OF SCIENCE": "BSC",
-        "BACHELOR OF COMMERCE": "BCOM",
-        "BACHELOR OF TECHNOLOGY": "BTECH",
-        "ENGINEERING": "BE",
-        "COMPUTER APPLICATION": "BCA",
-        "MASTER OF COMPUTER APPLICATION": "MCA",
-        "MASTER OF BUSINESS ADMINISTRATION": "MBA",
-        "LAW": "LLB",
-        "LL.B": "LLB",
-        "LLB": "LLB",
-        "DIPLOMA": "DIPLOMA",
-        "PHARMACY": "BPHARMA",
-        "BPHARM": "BPHARMA",
-        "MBBS": "MBBS",
-        "12": "12TH",
-        "12TH": "12TH",
-        "10": "10TH",
-        "10TH": "10TH"
-    }
-    for key in mappings:
-        if key in degree:
-            return mappings[key]
-    return degree
+# ------------------------ UI Layout ------------------------ #
+st.set_page_config(page_title="YuvaPath: Career Guide", layout="centered")
+st.title("🎓 YuvaPath - Voice-enabled AI Career Guide")
 
-# ---------------- gTTS Speech Output -------------------
-def speak_text(text):
-    tts = gTTS(text=text, lang="en")
-    tts.save("roadmap.mp3")
-    with open("roadmap.mp3", "rb") as f:
-        audio_bytes = f.read()
-        b64 = base64.b64encode(audio_bytes).decode()
-        audio_html = f"""
+st.markdown("#### 👋 Hello! I’m your career assistant. Tell me a few things and I’ll suggest the best path for you.")
+
+col1, col2 = st.columns(2)
+qualification = col1.selectbox("Select your highest qualification", list(CAREER_DB.keys()))
+interest = col2.text_input("Enter your interest or subject area (e.g., coding, design, law, business)", "")
+
+language = st.selectbox("Preferred output language", ["English", "Telugu"])
+submit = st.button("🔍 Show Career Path")
+
+# ------------------------ Recommendation Logic ------------------------ #
+def generate_roadmap(qualification, interest):
+    options = CAREER_DB.get(qualification, {})
+    matched = []
+    for career, steps in options.items():
+        if interest.lower() in career.lower() or interest.lower() in " ".join(steps).lower():
+            matched.append((career, steps))
+    if not matched:
+        matched = list(options.items())[:2]  # Show top 2 if no match
+    return matched
+
+def text_to_speech(text, lang='en'):
+    tts = gTTS(text=text, lang=lang)
+    mp3_fp = BytesIO()
+    tts.write_to_fp(mp3_fp)
+    mp3_fp.seek(0)
+    return mp3_fp
+
+# ------------------------ Output ------------------------ #
+if submit:
+    st.subheader("📌 Recommended Careers and Roadmap:")
+    results = generate_roadmap(qualification, interest)
+    full_roadmap = ""
+
+    for title, steps in results:
+        st.markdown(f"**🎯 {title}**")
+        for i, step in enumerate(steps, 1):
+            st.markdown(f"- Step {i}: {step}")
+            full_roadmap += f"Step {i}: {step}. "
+        st.markdown("---")
+
+    # Text-to-Speech
+    st.subheader("🔊 Listen to Your Roadmap")
+    lang_code = 'te' if language == "Telugu" else 'en'
+    audio = text_to_speech(full_roadmap, lang=lang_code)
+    b64 = base64.b64encode(audio.read()).decode()
+    audio_html = f"""
         <audio autoplay controls>
         <source src="data:audio/mp3;base64,{b64}" type="audio/mp3">
         </audio>
-        """
-        st.markdown(audio_html, unsafe_allow_html=True)
-
-# ---------------- Voice Input (WebRTC) -------------------
-audio_queue = queue.Queue()
-
-class AudioProcessor(AudioProcessorBase):
-    def recv(self, frame: av.AudioFrame) -> av.AudioFrame:
-        audio = frame.to_ndarray().flatten().astype(np.float32)
-        audio_queue.put(audio)
-        return frame
-
-st.subheader("🎙️ Speak or Type Your Degree")
-degree = ""
-use_voice = st.toggle("Use Microphone Input")
-
-if use_voice:
-    webrtc_ctx = webrtc_streamer(
-        key="speech",
-        mode=WebRtcMode.SENDONLY,
-        in_audio=True,
-        audio_processor_factory=AudioProcessor,
-        media_stream_constraints={"audio": True, "video": False},
-    )
-
-    if st.button("📝 Transcribe Voice"):
-        if not audio_queue.empty():
-            st.info("Transcribing...")
-            audio_data = np.concatenate(list(audio_queue.queue))
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as f:
-                with wave.open(f.name, "wb") as wf:
-                    wf.setnchannels(1)
-                    wf.setsampwidth(2)
-                    wf.setframerate(16000)
-                    wf.writeframes((audio_data * 32767).astype(np.int16).tobytes())
-                audio_path = f.name
-
-            recognizer = sr.Recognizer()
-            with sr.AudioFile(audio_path) as source:
-                audio = recognizer.record(source)
-                try:
-                    degree = recognizer.recognize_google(audio)
-                    st.success(f"🎤 You said: {degree}")
-                except sr.UnknownValueError:
-                    st.warning("Could not understand audio.")
-                except sr.RequestError:
-                    st.error("Speech Recognition error. Try again.")
-        else:
-            st.warning("No audio captured yet.")
-
-# Manual text input fallback
-degree_input = st.text_input("📚 Or type your Degree", value=degree)
-language = st.selectbox("🌐 Preferred Language", ["English", "Hindi", "Tamil", "Telugu"])
-
-# ---------------- Career Suggestion Output -------------------
-if st.button("🚀 Get Career Guidance"):
-    normalized_degree = normalize_degree(degree_input)
-    paths = career_paths.get(normalized_degree, career_paths["OTHER"])
-    roadmap = f"As a {degree_input}, focus on communication, digital tools, and explore {paths[0]}."
-
-    st.success("✅ Career Recommendations")
-    for i, path in enumerate(paths, 1):
-        st.markdown(f"**{i}. {path}**")
-
-    try:
-        detected_lang = langdetect.detect(degree_input)
-        st.caption(f"🌐 Detected Input Language: `{detected_lang}`")
-    except:
-        st.caption("🌐 Language detection failed.")
-
-    if st.button("🔊 Speak Roadmap"):
-        speak_text(roadmap)
+    """
+    st.markdown(audio_html, unsafe_allow_html=True)
