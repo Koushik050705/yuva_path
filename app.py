@@ -1,5 +1,5 @@
 import streamlit as st
-from streamlit_webrtc import webrtc_streamer, WebRtcMode
+from streamlit_webrtc import webrtc_streamer, WebRtcMode, AudioProcessorBase
 import speech_recognition as sr
 from gtts import gTTS
 import langdetect
@@ -60,7 +60,7 @@ def normalize_degree(degree_raw):
     for key in mappings:
         if key in degree:
             return mappings[key]
-    return degree  # fallback
+    return degree
 
 # ---------------- gTTS Speech Output -------------------
 def speak_text(text):
@@ -79,10 +79,7 @@ def speak_text(text):
 # ---------------- Voice Input (WebRTC) -------------------
 audio_queue = queue.Queue()
 
-class AudioProcessor:
-    def __init__(self) -> None:
-        pass
-
+class AudioProcessor(AudioProcessorBase):
     def recv(self, frame: av.AudioFrame) -> av.AudioFrame:
         audio = frame.to_ndarray().flatten().astype(np.float32)
         audio_queue.put(audio)
