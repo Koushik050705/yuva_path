@@ -1,7 +1,7 @@
 streamlit
 streamlit-webrtc
 speechrecognition
-pyttsx3
+gtts
 langdetect
 numpy
 av
