@@ -1,23 +1,21 @@
 import streamlit as st
 from streamlit_webrtc import webrtc_streamer, WebRtcMode
 import speech_recognition as sr
-import pyttsx3
-from langdetect import detect
-import av
-import queue
+import langdetect
+from gtts import gTTS
 import numpy as np
-import tempfile
+import av
 import wave
+import tempfile
+import queue
+import base64
 
+# Config
 st.set_page_config(page_title="YuvaPath - Career Co-Pilot", layout="centered")
-
 st.title("🎯 YuvaPath: AI Career Co-Pilot")
 st.markdown("#### Personalized career guidance with voice or text")
 
-# TTS Engine
-engine = pyttsx3.init()
-engine.setProperty("rate", 150)
-
+# Simple career path database
 career_paths = {
     "BA": ["Content Writer", "UPSC Aspirant", "Marketing Analyst"],
     "BSC": ["Data Analyst", "Lab Technician", "UX Designer"],
@@ -25,77 +23,92 @@ career_paths = {
     "OTHER": ["Skill-based jobs", "Certifications", "Freelancing"]
 }
 
-# Set up audio recording
+# Audio queue setup
 audio_queue = queue.Queue()
 
 class AudioProcessor:
     def __init__(self) -> None:
-        self.recording = False
+        pass
 
     def recv(self, frame: av.AudioFrame) -> av.AudioFrame:
         audio = frame.to_ndarray().flatten().astype(np.float32)
         audio_queue.put(audio)
         return frame
 
-st.markdown("### 🎙️ Voice Input (speak your degree)")
+# gTTS text-to-speech
+def speak_text(text):
+    tts = gTTS(text=text, lang="en")
+    tts.save("roadmap.mp3")
+    with open("roadmap.mp3", "rb") as f:
+        audio_bytes = f.read()
+        b64 = base64.b64encode(audio_bytes).decode()
+        audio_html = f"""
+        <audio autoplay controls>
+        <source src="data:audio/mp3;base64,{b64}" type="audio/mp3">
+        </audio>
+        """
+        st.markdown(audio_html, unsafe_allow_html=True)
 
-ctx = webrtc_streamer(
-    key="example",
-    mode=WebRtcMode.SENDONLY,
-    in_audio=True,
-    audio_processor_factory=AudioProcessor,
-    media_stream_constraints={"audio": True, "video": False},
-)
-
+# Voice input section
+st.subheader("🎙️ Speak or Type Your Degree")
 degree = ""
+use_voice = st.toggle("Use Microphone Input")
 
-if st.button("📝 Transcribe Voice"):
-    if not audio_queue.empty():
-        st.info("Transcribing...")
+if use_voice:
+    webrtc_ctx = webrtc_streamer(
+        key="speech",
+        mode=WebRtcMode.SENDONLY,
+        in_audio=True,
+        audio_processor_factory=AudioProcessor,
+        media_stream_constraints={"audio": True, "video": False},
+    )
 
-        # Save audio to temp WAV
-        audio_data = np.concatenate(list(audio_queue.queue))
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as f:
-            with wave.open(f.name, "wb") as wf:
-                wf.setnchannels(1)
-                wf.setsampwidth(2)
-                wf.setframerate(16000)
-                wf.writeframes((audio_data * 32767).astype(np.int16).tobytes())
-            audio_path = f.name
+    if st.button("📝 Transcribe Voice"):
+        if not audio_queue.empty():
+            st.info("Transcribing...")
+            audio_data = np.concatenate(list(audio_queue.queue))
 
-        # Transcribe using SpeechRecognition
-        r = sr.Recognizer()
-        with sr.AudioFile(audio_path) as source:
-            audio = r.record(source)
-            try:
-                degree = r.recognize_google(audio)
-                st.success(f"🎤 You said: {degree}")
-            except sr.UnknownValueError:
-                st.warning("Could not understand audio.")
-            except sr.RequestError:
-                st.error("Speech Recognition API error.")
-    else:
-        st.warning("No voice captured yet.")
+            # Save audio to temp WAV file
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as f:
+                with wave.open(f.name, "wb") as wf:
+                    wf.setnchannels(1)
+                    wf.setsampwidth(2)
+                    wf.setframerate(16000)
+                    wf.writeframes((audio_data * 32767).astype(np.int16).tobytes())
+                audio_path = f.name
 
-# Manual fallback input
+            recognizer = sr.Recognizer()
+            with sr.AudioFile(audio_path) as source:
+                audio = recognizer.record(source)
+                try:
+                    degree = recognizer.recognize_google(audio)
+                    st.success(f"🎤 You said: {degree}")
+                except sr.UnknownValueError:
+                    st.warning("Couldn't understand the audio.")
+                except sr.RequestError:
+                    st.error("Speech recognition failed. Try again.")
+        else:
+            st.warning("No audio received. Try speaking after mic starts.")
+
+# Manual input fallback
 degree_input = st.text_input("📚 Or type your Degree", value=degree)
 language = st.selectbox("🌐 Preferred Language", ["English", "Hindi", "Tamil", "Telugu"])
 
+# Main career logic
 if st.button("🚀 Get Career Guidance"):
     degree_upper = degree_input.strip().upper()
     paths = career_paths.get(degree_upper, career_paths["OTHER"])
-    roadmap = f"As a {degree_input}, focus on learning communication, digital tools, and explore {paths[0]}."
+    roadmap = f"As a {degree_input}, focus on improving communication, learning digital tools, and explore a path like {paths[0]}."
 
     st.success("✅ Career Recommendations")
     for i, path in enumerate(paths, 1):
         st.markdown(f"**{i}. {path}**")
 
     try:
-        lang_detected = detect(degree_input)
-        st.caption(f"🌐 Language Detected: `{lang_detected}`")
+        detected_lang = langdetect.detect(degree_input)
+        st.caption(f"🌐 Detected Input Language: `{detected_lang}`")
     except:
         st.caption("🌐 Language detection failed.")
 
     if st.button("🔊 Speak Roadmap"):
-        engine.say(roadmap)
-        engine.runAndWait()
+        speak_text(roadmap)
