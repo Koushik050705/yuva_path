@@ -1,4 +1,7 @@
 streamlit
 streamlit-webrtc
+speechrecognition
 pyttsx3
 langdetect
+numpy
+av
